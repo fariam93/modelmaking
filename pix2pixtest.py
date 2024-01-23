@@ -409,28 +409,6 @@ early_stopping_callback = EarlyStopping(monitor='val_loss', patience=10, verbose
 checkpoint_path = "model_checkpoints/cp.ckpt"
 checkpoint_callback = ModelCheckpoint(checkpoint_path, monitor='val_loss', save_best_only=True, verbose=1)
 
-# Compile models with the best hyperparameters
-# Compile the Generator model
-generator.compile(
-    optimizer=Adam(lr=best_hyperparameters.get('learning_rate', 1e-4)),
-    loss=[BinaryCrossentropy(from_logits=True), MeanAbsoluteError()],
-    metrics=[MeanAbsoluteError()]  # Add any additional metrics you want to track
-)
-
-# Compile the Discriminator model
-discriminator.compile(
-    optimizer=Adam(lr=best_hyperparameters.get('discriminator_learning_rate', 1e-4)),
-    loss=BinaryCrossentropy(from_logits=True),
-    metrics=['accuracy']  # You can use accuracy as a metric for the discriminator
-)
-
-# Compile the Combined model
-combined_model.compile(
-    optimizer=Adam(lr=best_hyperparameters.get('combined_model_learning_rate', 1e-4)),
-    loss=[BinaryCrossentropy(from_logits=True), MeanAbsoluteError()],
-    metrics=[MeanAbsoluteError()]  # Add any additional metrics you want to track
-)
-
 # Final model training with the best hyperparameters
 best_model.fit(train_dataset, epochs=50, validation_data=val_dataset, callbacks=[tensorboard_callback, early_stopping_callback, checkpoint_callback])
 
