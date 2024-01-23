@@ -12,11 +12,143 @@ from tensorflow.keras.callbacks import ReduceLROnPlateau
 from kerastuner.tuners import RandomSearch
 from tensorflow.keras.callbacks import ReduceLROnPlateau, TensorBoard, EarlyStopping, ModelCheckpoint
 import datetime
+import os
+import random
+import shutil
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 
+
+###########################################################################################
+################               Data preparation and splitting               ###############
+###########################################################################################
+
+# Function to apply augmentations to an image
+def apply_augmentation(image):
+    augmented_images = []
+
+    # 1. Horizontal Flip
+    augmented_images.append(ImageOps.mirror(image))
+
+    # 2. Rotation
+    augmented_images.append(image.rotate(random.uniform(-15, 15)))
+
+    # 3. Scaling/Zooming
+    scale = random.uniform(0.9, 1.1)
+    width, height = image.size
+    image_zoomed = image.resize((int(scale * width), int(scale * height)), Image.ANTIALIAS)
+    image_zoomed = ImageOps.fit(image_zoomed, (width, height), centering=(0.5, 0.5))
+    augmented_images.append(image_zoomed)
+
+    # 4. Brightness Adjustment
+    enhancer = ImageEnhance.Brightness(image)
+    augmented_images.append(enhancer.enhance(random.uniform(0.8, 1.2)))
+
+    # 5. Contrast Adjustment
+    enhancer = ImageEnhance.Contrast(image)
+    augmented_images.append(enhancer.enhance(random.uniform(0.8, 1.2)))
+
+    # 6. Color Jitter
+    enhancer = ImageEnhance.Color(image)
+    augmented_images.append(enhancer.enhance(random.uniform(0.8, 1.2)))
+
+    # 7. Cropping
+    left = width * 0.1
+    top = height * 0.1
+    right = width * 0.9
+    bottom = height * 0.9
+    augmented_images.append(image.crop((left, top, right, bottom)).resize((width, height)))
+
+    # 8. Gaussian Blur
+    augmented_images.append(image.filter(ImageFilter.GaussianBlur(radius=2)))
+
+    # 9. Noise Injection
+    np_image = np.array(image)
+    noise = np.random.normal(0, 25, np_image.shape)
+    np_image = np.clip(np_image + noise, 0, 255).astype(np.uint8)
+    augmented_images.append(Image.fromarray(np_image))
+
+    return augmented_images
+
+# Function to combine input and target images side by side
+def combine_images(input_image, target_image):
+    # Ensure both images are the same size
+    target_image = target_image.resize(input_image.size)
+
+    # Create a new image with double width and the same height as the input images
+    combined_image = Image.new('RGB', (2 * input_image.width, input_image.height))
+
+    # Paste the input and target images side by side
+    combined_image.paste(input_image, (0, 0))
+    combined_image.paste(target_image, (input_image.width, 0))
+
+    return combined_image
+
+# Directory paths
+input_images_dir = 'path/to/input_images'
+target_images_dir = 'path/to/target_images'
+combined_images_dir = 'path/to/combined_images'
+
+# Ensure output directory exists
+os.makedirs(combined_images_dir, exist_ok=True)
+
+# Iterate over all image pairs and apply augmentations
+for filename in os.listdir(input_images_dir):
+    input_image_path = os.path.join(input_images_dir, filename)
+    target_image_path = os.path.join(target_images_dir, filename)
+
+    input_image = Image.open(input_image_path)
+    target_image = Image.open(target_image_path)
+
+    augmented_input_images = apply_augmentation(input_image)
+
+    for i, aug_input_image in enumerate(augmented_input_images):
+        combined_image = combine_images(aug_input_image, target_image)
+        combined_image_path = os.path.join(combined_images_dir, f"{filename.split('.')[0]}_aug{i}.jpg")
+        combined_image.save(combined_image_path)
+
+# Data Splitting
+# Define the split ratios
+train_ratio = 0.70
+val_ratio = 0.15
+test_ratio = 0.15
+
+# Get all the combined image filenames
+all_filenames = os.listdir(combined_images_dir)
+np.random.shuffle(all_filenames)  # Randomly shuffle the list
+
+# Calculate the number of images for each set
+total_images = len(all_filenames)
+train_count = int(total_images * train_ratio)
+val_count = int(total_images * val_ratio)
+
+# Split the filenames
+train_filenames = all_filenames[:train_count]
+val_filenames = all_filenames[train_count:train_count + val_count]
+test_filenames = all_filenames[train_count + val_count:]
+
+# Function to copy files to the respective directories
+def copy_files(filenames, source_dir, dest_dir):
+    os.makedirs(dest_dir, exist_ok=True)
+    for filename in filenames:
+        shutil.copy(os.path.join(source_dir, filename), os.path.join(dest_dir, filename))
+
+# Directory paths for split data
+train_dir = 'path/to/train_data'
+val_dir = 'path/to/val_data'
+test_dir = 'path/to/test_data'
+
+# Copy the files to the respective directories
+copy_files(train_filenames, combined_images_dir, train_dir)
+copy_files(val_filenames, combined_images_dir, val_dir)
+copy_files(test_filenames, combined_images_dir, test_dir)
+
+###########################################################################################
+################        HyperParameter Tuning and Training Loop             ###############
+###########################################################################################
+    
 # Define input shape and number of bracelet types
 input_shape = (256, 256, 3)  # Example input shape
 num_bracelet_types = 50      # Number of different bracelet types
-
 
 class Pix2PixHyperModel(HyperModel):
     def __init__(self, input_shape, mask_shape, num_bracelet_types):
