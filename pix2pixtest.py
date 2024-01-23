@@ -170,7 +170,17 @@ tuner = RandomSearch(
 
 # Perform hyperparameter search (use your train_dataset and val_dataset)
 tuner.search(train_dataset, validation_data=val_dataset, epochs=20, callbacks=[early_stopping_callback, reduce_lr])
-  
+
+# Callbacks for the final model training
+log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+tensorboard_callback = TensorBoard(log_dir=log_dir, histogram_freq=1)
+early_stopping_callback = EarlyStopping(monitor='val_loss', patience=10, verbose=1, restore_best_weights=True)
+checkpoint_path = "model_checkpoints/cp.ckpt"
+checkpoint_callback = ModelCheckpoint(checkpoint_path, monitor='val_loss', save_best_only=True, verbose=1)
+
+# Final model training with the best hyperparameters
+best_model.fit(train_dataset, epochs=50, validation_data=val_dataset, callbacks=[tensorboard_callback, early_stopping_callback, checkpoint_callback])
+
 
 # Training loop placeholder
 # (Include code to train the model using your dataset, labels, and training strategy)
