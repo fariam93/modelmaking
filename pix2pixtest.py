@@ -180,7 +180,7 @@ def prepare_datasets(train_dir, val_dir, image_size=(256, 256), batch_size=32):
 
     return train_dataset, val_dataset
 # Prepare datasets
-train_dataset, val_dataset = prepare_datasets()
+train_dataset, val_dataset = prepare_datasets(train_dir, val_dir)
 
 ###########################################################################################
 ################        HyperParameter Tuning and Training Loop             ###############
@@ -304,22 +304,40 @@ class Pix2PixHyperModel(HyperModel):
         return combined_model
 
     def build(self, hp):
-            generator = self.build_generator(hp)
-            discriminator = self.build_discriminator(hp)
-            combined_model = build_combined(generator, discriminator, self.input_shape, self.num_bracelet_types)
-            combined_model.compile(
-                optimizer=Adam(
-                    lr=hp.Float('learning_rate', 1e-4, 1e-2, sampling='log')
-                ),
-                loss=[BinaryCrossentropy(from_logits=True), MeanAbsoluteError()]
-            )
-            return combined_model
+        generator = self.build_generator(hp)
+        discriminator = self.build_discriminator(hp)
+        combined_model = self.build_combined(generator, discriminator)
+
+        # Compile the Generator model
+        generator.compile(
+            optimizer=Adam(lr=hp.Float('generator_learning_rate', 1e-4, 1e-2, sampling='log')),
+            loss=MeanAbsoluteError(),
+            metrics=[MeanAbsoluteError()]
+        )
+
+        # Compile the Discriminator model
+        discriminator.compile(
+            optimizer=Adam(lr=hp.Float('discriminator_learning_rate', 1e-4, 1e-2, sampling='log')),
+            loss=BinaryCrossentropy(from_logits=True),
+            metrics=['accuracy']
+        )
+
+        # Compile the Combined model
+        combined_model.compile(
+            optimizer=Adam(lr=hp.Float('combined_model_learning_rate', 1e-4, 1e-2, sampling='log')),
+            loss=[BinaryCrossentropy(from_logits=True), MeanAbsoluteError()],
+            metrics=[MeanAbsoluteError()]
+        )
+
+        return combined_model
 
 
 ###########################################################################################
 ################                training the pix2pix Model                  ###############
 ###########################################################################################
 def train_pix2pix(generator, discriminator, combined_model, train_dataset, val_dataset, epochs=50):
+    # Initialize metric for L1 loss
+    l1_loss_metric = MeanAbsoluteError()
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}/{epochs}")
 
@@ -377,6 +395,13 @@ tuner = RandomSearch(
 # Perform hyperparameter search (use your train_dataset and val_dataset)
 tuner.search(train_dataset, validation_data=val_dataset, epochs=20, callbacks=[early_stopping_callback, reduce_lr])
 
+# Retrieve the best hyperparameters and build final models
+best_hyperparameters = tuner.get_best_hyperparameters()[0]
+generator = build_generator(best_hyperparameters)
+discriminator = build_discriminator(best_hyperparameters)
+combined_model = build_combined(generator, discriminator)
+
+
 # Callbacks for the final model training
 log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 tensorboard_callback = TensorBoard(log_dir=log_dir, histogram_freq=1)
@@ -384,8 +409,35 @@ early_stopping_callback = EarlyStopping(monitor='val_loss', patience=10, verbose
 checkpoint_path = "model_checkpoints/cp.ckpt"
 checkpoint_callback = ModelCheckpoint(checkpoint_path, monitor='val_loss', save_best_only=True, verbose=1)
 
+# Compile models with the best hyperparameters
+# Compile the Generator model
+generator.compile(
+    optimizer=Adam(lr=best_hyperparameters.get('learning_rate', 1e-4)),
+    loss=[BinaryCrossentropy(from_logits=True), MeanAbsoluteError()],
+    metrics=[MeanAbsoluteError()]  # Add any additional metrics you want to track
+)
+
+# Compile the Discriminator model
+discriminator.compile(
+    optimizer=Adam(lr=best_hyperparameters.get('discriminator_learning_rate', 1e-4)),
+    loss=BinaryCrossentropy(from_logits=True),
+    metrics=['accuracy']  # You can use accuracy as a metric for the discriminator
+)
+
+# Compile the Combined model
+combined_model.compile(
+    optimizer=Adam(lr=best_hyperparameters.get('combined_model_learning_rate', 1e-4)),
+    loss=[BinaryCrossentropy(from_logits=True), MeanAbsoluteError()],
+    metrics=[MeanAbsoluteError()]  # Add any additional metrics you want to track
+)
+
 # Final model training with the best hyperparameters
 best_model.fit(train_dataset, epochs=50, validation_data=val_dataset, callbacks=[tensorboard_callback, early_stopping_callback, checkpoint_callback])
 
 # Train the Pix2Pix model
 train_pix2pix(generator, discriminator, combined_model, train_dataset, val_dataset, epochs=50)
+
+# Save the model after training
+generator.save('generator_model.h5')
+discriminator.save('discriminator_model.h5')
+combined_model.save('combined_model.h5')
