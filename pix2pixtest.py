@@ -4,10 +4,14 @@ from tensorflow.keras.layers import Input, Dense, Reshape, Concatenate, Conv2D, 
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import BinaryCrossentropy, MeanAbsoluteError
+from tensorflow.keras.regularizers import l2
 from kerastuner import HyperModel
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import BinaryCrossentropy, MeanAbsoluteError
-
+from tensorflow.keras.callbacks import ReduceLROnPlateau
+from kerastuner.tuners import RandomSearch
+from tensorflow.keras.callbacks import ReduceLROnPlateau, TensorBoard, EarlyStopping, ModelCheckpoint
+import datetime
 
 # Define input shape and number of bracelet types
 input_shape = (256, 256, 3)  # Example input shape
@@ -142,6 +146,16 @@ class Pix2PixHyperModel(HyperModel):
 
 # Set up hyperparameter tuning (separate from the main training loop)
 hypermodel = Pix2PixHyperModel(input_shape, mask_shape, num_bracelet_types)
+
+# Learning rate scheduler callback
+reduce_lr = ReduceLROnPlateau(
+    monitor='val_loss',
+    factor=0.1,
+    patience=5,
+    min_lr=1e-6,
+    verbose=1
+)
+
 tuner = RandomSearch(
     hypermodel,
     objective='val_loss',
@@ -151,9 +165,15 @@ tuner = RandomSearch(
     project_name='pix2pix_tuning'
 )
 
+# Data Preparation (placeholder, implement based on your dataset)
+#train_dataset, val_dataset = prepare_datasets()  # You need to define prepare_datasets function
 
 # Perform hyperparameter search (use your train_dataset and val_dataset)
-# tuner.search(train_dataset, validation_data=val_dataset, epochs=20, callbacks=[early_stopping_callback])
-   
+tuner.search(train_dataset, validation_data=val_dataset, epochs=20, callbacks=[early_stopping_callback, reduce_lr])
+  
+
 # Training loop placeholder
 # (Include code to train the model using your dataset, labels, and training strategy)
+
+# Training Loop (placeholder, implement based on your training strategy)
+#train_model(best_model, train_dataset, val_dataset)  # You need to define train_model function
