@@ -16,7 +16,8 @@ import os
 import random
 import shutil
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
-
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.metrics import MeanAbsoluteError
 
 ###########################################################################################
 ################               Data preparation and splitting               ###############
@@ -141,6 +142,45 @@ test_dir = 'path/to/test_data'
 copy_files(train_filenames, combined_images_dir, train_dir)
 copy_files(val_filenames, combined_images_dir, val_dir)
 copy_files(test_filenames, combined_images_dir, test_dir)
+
+def prepare_datasets(train_dir, val_dir, image_size=(256, 256), batch_size=32):
+    """
+    Prepare training and validation datasets.
+    
+    Args:
+    - train_dir: Directory containing training data.
+    - val_dir: Directory containing validation data.
+    - image_size: Tuple specifying the size of the images.
+    - batch_size: Batch size for training.
+
+    Returns:
+    - train_dataset: A tf.data.Dataset object for training.
+    - val_dataset: A tf.data.Dataset object for validation.
+    """
+    # Create ImageDataGenerators for data augmentation (for training) and only rescaling (for validation)
+    train_datagen = ImageDataGenerator(
+        rescale=1./255,  # Normalize images
+        # Add any additional augmentation parameters if needed
+    )
+    val_datagen = ImageDataGenerator(rescale=1./255)  # Normalize images
+
+    # Create iterators for the training and validation datasets
+    train_dataset = train_datagen.flow_from_directory(
+        train_dir,
+        target_size=image_size,
+        batch_size=batch_size,
+        class_mode=None  # Set to None for unsupervised learning
+    )
+    val_dataset = val_datagen.flow_from_directory(
+        val_dir,
+        target_size=image_size,
+        batch_size=batch_size,
+        class_mode=None  # Set to None for unsupervised learning
+    )
+
+    return train_dataset, val_dataset
+# Prepare datasets
+train_dataset, val_dataset = prepare_datasets()
 
 ###########################################################################################
 ################        HyperParameter Tuning and Training Loop             ###############
@@ -276,6 +316,43 @@ class Pix2PixHyperModel(HyperModel):
             return combined_model
 
 
+###########################################################################################
+################                training the pix2pix Model                  ###############
+###########################################################################################
+def train_pix2pix(generator, discriminator, combined_model, train_dataset, val_dataset, epochs=50):
+    for epoch in range(epochs):
+        print(f"Epoch {epoch + 1}/{epochs}")
+
+        for step, (input_images, target_images) in enumerate(train_dataset):
+            # Here, input_images and target_images should be the corresponding parts of your data
+
+            # Generate fake images
+            generated_images = generator.predict(input_images)
+
+            # Create labels for real and fake images
+            valid = np.ones((input_images.shape[0],) + discriminator.output_shape[1:])
+            fake = np.zeros((input_images.shape[0],) + discriminator.output_shape[1:])
+
+            # Train discriminator
+            d_loss_real = discriminator.train_on_batch([input_images, target_images], valid)
+            d_loss_fake = discriminator.train_on_batch([input_images, generated_images], fake)
+            d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+
+            # Train generator
+            g_loss = combined_model.train_on_batch([input_images, target_images], [valid, target_images])
+
+            print(f"Step {step + 1}: D Loss: {d_loss}, G Loss: {g_loss}")
+
+        # Validation step at the end of each epoch
+        l1_loss_metric.reset_states()
+        for val_input_images, val_target_images in val_dataset:
+            val_generated_images = generator.predict(val_input_images)
+            l1_loss_metric.update_state(val_target_images, val_generated_images)
+        
+        val_l1_loss = l1_loss_metric.result().numpy()
+        print(f"Validation L1 Loss: {val_l1_loss}")
+        
+
 # Set up hyperparameter tuning (separate from the main training loop)
 hypermodel = Pix2PixHyperModel(input_shape, mask_shape, num_bracelet_types)
 
@@ -297,9 +374,6 @@ tuner = RandomSearch(
     project_name='pix2pix_tuning'
 )
 
-# Data Preparation (placeholder, implement based on your dataset)
-#train_dataset, val_dataset = prepare_datasets()  # You need to define prepare_datasets function
-
 # Perform hyperparameter search (use your train_dataset and val_dataset)
 tuner.search(train_dataset, validation_data=val_dataset, epochs=20, callbacks=[early_stopping_callback, reduce_lr])
 
@@ -313,9 +387,5 @@ checkpoint_callback = ModelCheckpoint(checkpoint_path, monitor='val_loss', save_
 # Final model training with the best hyperparameters
 best_model.fit(train_dataset, epochs=50, validation_data=val_dataset, callbacks=[tensorboard_callback, early_stopping_callback, checkpoint_callback])
 
-
-# Training loop placeholder
-# (Include code to train the model using your dataset, labels, and training strategy)
-
-# Training Loop (placeholder, implement based on your training strategy)
-#train_model(best_model, train_dataset, val_dataset)  # You need to define train_model function
+# Train the Pix2Pix model
+train_pix2pix(generator, discriminator, combined_model, train_dataset, val_dataset, epochs=50)
